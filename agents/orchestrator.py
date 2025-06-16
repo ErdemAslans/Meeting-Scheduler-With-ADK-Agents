@@ -1,89 +1,84 @@
+#!/usr/bin/env python3
+"""
+Google ADK Meeting Scheduler Orchestrator
+"""
+
+import os
+import asyncio
+import re
+from datetime import datetime, timedelta
+from typing import List, Any
 from google.adk.agents import Agent
 import vertexai
-from typing import Dict, List, Any
-import asyncio
-from datetime import datetime, timedelta
-import re
-import os
-from agents.calendar_analyst import check_calendar_availability
-from agents.email_composer import compose_meeting_invitation
-from agents.email_sender import send_meeting_invitations
 
-# Orchestrator Agent için Google ADK Agent tanımı
+# Import tool functions from other agents
+from .calendar_analyst import check_calendar_availability
+from .email_composer import compose_meeting_invitation
+from .email_sender import send_meeting_invitations
+
 def create_orchestrator_agent():
     """Ana koordinatör agent'ı oluşturur"""
     
-    calendar_analyst = Agent(
-        name="calendar_analyst",
-        model="gemini-1.5-flash",
-        temperature=0.1,
-        instruction="""Sen uzman bir takvim analistisin.
-        - FreeBusy API kullanarak takvimleri sorgula
-        - Çalışma saatleri: 09:00-18:00
-        - Öğle arası: 12:00-13:00 (meşgul)
-        - En uygun 3 zamanı öner
-        - Puanlama kriterleri: sabah 10-11 ve öğleden sonra 14-16 arası yüksek puan
-        
-        Sen sadece takvim analizinden sorumlusun. Kullanıcıdan toplantı detayları istediğinde, 
-        katılımcılar listesi, tarih ve süre bilgilerini topla.""",
-        tools=[check_calendar_availability]
-    )
-
-    email_composer = Agent(
-        name="email_composer", 
-        model="gemini-1.5-flash",
-        temperature=0.7,
-        instruction="""Sen profesyonel e-posta yazarısın.
-        - Kurumsal standartlarda davet hazırla
-        - HTML ve plain text versiyonları oluştur
-        - ICS takvim dosyası ekle
-        - Türkçe ve İngilizce destek
-        - Kişiselleştirilmiş içerik
-        
-        Sen sadece e-posta oluşturmaktan sorumlusun. Toplantı detayları verildikinde
-        profesyonel ve açık davetiye metni hazırla.""",
-        tools=[compose_meeting_invitation]
-    )
-
-    email_sender = Agent(
-        name="email_sender",
-        model="gemini-1.5-flash", 
-        temperature=0.1,
-        instruction="""Sen güvenilir e-posta gönderim uzmanısın.
-        - SMTP üzerinden güvenli gönderim
-        - Gmail ve Outlook desteği
-        - Teslimat onayı takibi
-        - Hata durumunda retry
-        
-        Sen sadece e-posta göndermekten sorumlusun. E-posta içeriği hazır olduğunda
-        güvenli bir şekilde alıcılara ulaştır.""",
-        tools=[send_meeting_invitations]
-    )
-
+    # Ana orchestrator agent
     orchestrator = Agent(
         name="meeting_orchestrator",
         model="gemini-2.0-flash",
-        temperature=0.3,
-        instruction="""Sen akıllı toplantı planlama koordinatörüsün.
-        
-        Kullanıcı şöyle diyecek: "Ali (ali@gmail.com) ve Ayşe (ayse@outlook.com) ile yarın 1 saatlik toplantı ayarla"
-        
-        Adımlar:
-        1. Komutu ayrıştır (katılımcılar, tarih, süre)
-        2. Calendar Analyst'e yönlendir → müsait zamanları bul
-        3. En uygun zamanı seç veya kullanıcıya sor
-        4. Email Composer'a yönlendir → davet hazırla
-        5. Email Sender'a yönlendir → gönder
-        6. Sonucu bildir
-        
-        Doğal dil desteği:
-        - "yarın", "pazartesi", "öğleden sonra" gibi ifadeleri anla
-        - Türkçe ve İngilizce
-        - Eksik bilgileri kibarca sor
-        
-        Önemli: Her adımı sırasıyla takip et ve diğer agent'lara uygun tool'ları kullanarak yönlendir.
-        Kullanıcıya süreç boyunca bilgi ver.""",
-        transfer_agents=[calendar_analyst, email_composer, email_sender]
+        description="🤖 AI-powered meeting scheduler - Akıllı toplantı planlama asistanı",
+        instruction="""Sen gelişmiş bir toplantı planlama asistanısın!
+
+GÖREVIN: Kullanıcı doğal dilde toplantı talep ettiğinde, end-to-end toplantı planlama sürecini yönet.
+
+ÖRNEKLER:
+- "Ali (ali@gmail.com) ile yarın 1 saatlik toplantı ayarla"
+- "john@company.com ile pazartesi 30 dakikalık demo planla"
+- "team@startup.com ile cuma 2 saatlik planlama toplantısı"
+
+İŞ AKIŞIN:
+1. 📝 Kullanıcı talebini ayrıştır:
+   - Katılımcı e-postaları çıkar
+   - Tarih belirle (yarın, pazartesi, vs.)
+   - Süre hesapla (1 saat = 60 dakika)
+   - Toplantı başlığını oluştur
+
+2. 📅 check_calendar_availability tool'unu kullan:
+   - Katılımcılar listesi, tarih, süre parametreleri
+   - Müsait zamanları al ve skorla
+
+3. ⏰ En uygun zamanı seç:
+   - En yüksek skorlu zamanı tercih et
+   - Alternatifleri de kullanıcıya sun
+
+4. 📧 compose_meeting_invitation tool'unu kullan:
+   - Toplantı detaylarını ve dili geç
+   - Profesyonel davet hazırla
+
+5. 📨 send_meeting_invitations tool'unu kullan:
+   - E-posta içeriği ve alıcıları geç
+   - Gönderim sonucunu raporla
+
+6. ✅ Kullanıcıya özet rapor ver:
+   - Seçilen tarih/saat
+   - Gönderilen davetiye sayısı
+   - Başarı durumu
+
+ÖNEMLI:
+- Her adımı sırasıyla takip et
+- Tool'ları doğru parametrelerle çağır  
+- Kullanıcıya her adımda bilgi ver
+- Hatalar durumunda alternatifleri öner
+- Türkçe ve İngilizce destekle
+
+Örnek kullanıcı mesajı aldığında:
+"Ali (ali@gmail.com) ve Ayşe (ayse@outlook.com) ile yarın 1 saatlik toplantı ayarla"
+
+1. Katılımcıları tespit et: ["ali@gmail.com", "ayse@outlook.com"]
+2. Tarihi hesapla: yarın = tomorrow
+3. Süreyi belirle: 1 saat = 60 dakika
+4. check_calendar_availability(participants=["ali@gmail.com", "ayse@outlook.com"], date="2025-06-17", duration_minutes=60)
+5. En uygun zamanı seç ve compose_meeting_invitation çağır
+6. send_meeting_invitations ile gönder
+7. Kullanıcıya sonucu rapor et""",
+        tools=[check_calendar_availability, compose_meeting_invitation, send_meeting_invitations]
     )
     
     return orchestrator
@@ -94,7 +89,7 @@ class MeetingOrchestrator:
     def __init__(self):
         self.orchestrator_agent = create_orchestrator_agent()
         
-    def parse_meeting_request(self, request: str) -> Dict:
+    def parse_meeting_request(self, request: str) -> dict:
         """Doğal dil toplantı isteğini ayrıştır"""
         
         # E-posta adreslerini bul
@@ -133,26 +128,6 @@ class MeetingOrchestrator:
             if days_ahead <= 0:
                 days_ahead += 7
             meeting_date = (date_today + timedelta(days_ahead)).strftime('%Y-%m-%d')
-        elif 'salı' in request.lower() or 'tuesday' in request.lower():
-            days_ahead = 1 - date_today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            meeting_date = (date_today + timedelta(days_ahead)).strftime('%Y-%m-%d')
-        elif 'çarşamba' in request.lower() or 'wednesday' in request.lower():
-            days_ahead = 2 - date_today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            meeting_date = (date_today + timedelta(days_ahead)).strftime('%Y-%m-%d')
-        elif 'perşembe' in request.lower() or 'thursday' in request.lower():
-            days_ahead = 3 - date_today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            meeting_date = (date_today + timedelta(days_ahead)).strftime('%Y-%m-%d')
-        elif 'cuma' in request.lower() or 'friday' in request.lower():
-            days_ahead = 4 - date_today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            meeting_date = (date_today + timedelta(days_ahead)).strftime('%Y-%m-%d')
         else:
             # Varsayılan: yarın
             meeting_date = (date_today + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -179,48 +154,18 @@ class MeetingOrchestrator:
                     duration = time_value
                 break
         
-        # Toplantı başlığını çıkar
-        title = "Toplantı"
-        
-        # Ortak başlık kalıpları
-        title_keywords = [
-            'toplantı', 'meeting', 'görüşme', 'planlama', 'sprint', 
-            'retrospektif', 'demo', 'sunum', 'değerlendirme'
-        ]
-        
-        words = request.lower().split()
-        for i, word in enumerate(words):
-            if any(keyword in word for keyword in title_keywords):
-                # Başlığı oluştur
-                title_parts = []
-                if i > 0:
-                    title_parts.extend(words[max(0, i-2):i])
-                title_parts.append(word)
-                if i < len(words) - 1:
-                    title_parts.extend(words[i+1:min(len(words), i+3)])
-                
-                title = ' '.join(title_parts).title()
-                break
-        
-        # Konum
-        location = "Online"
-        if any(word in request.lower() for word in ['ofis', 'office', 'konferans', 'conference']):
-            location = "Ofis"
-        elif any(word in request.lower() for word in ['zoom', 'teams', 'meet', 'online']):
-            location = "Online"
-        
         return {
             'participants': participants,
             'participant_names': names,
             'date': meeting_date,
             'duration': duration,
-            'title': title,
-            'location': location,
+            'title': "Toplantı",
+            'location': "Online",
             'organizer': os.getenv('SENDER_EMAIL', 'organizer@example.com'),
             'organizer_name': os.getenv('SENDER_NAME', 'Toplantı Organizatörü')
         }
     
-    async def schedule_meeting_with_agent(self, request: str, language: str = 'tr') -> Dict:
+    async def schedule_meeting_with_agent(self, request: str, language: str = 'tr') -> dict:
         """Google ADK Agent kullanarak toplantı planla"""
         try:
             print("🤖 Orchestrator Agent çalışıyor...")
@@ -308,30 +253,24 @@ class MeetingOrchestrator:
             except Exception as e:
                 print(f"❌ Beklenmeyen hata: {str(e)}")
 
-# Standalone çalıştırma için
-async def main():
-    orchestrator = MeetingOrchestrator()
-    await orchestrator.run_interactive_mode()
+# ADK Web için root agent - bu önemli!
+root_agent = create_orchestrator_agent()
 
+# Vertex AI başlatma
+def setup_vertexai():
+    """Vertex AI'yi başlat"""
+    project_id = os.getenv('GOOGLE_CLOUD_PROJECT', 'agentproject-462613')
+    try:
+        vertexai.init(project=project_id, location='us-central1')
+        print(f"✅ Vertex AI başlatıldı - Project: {project_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Vertex AI başlatma hatası: {e}")
+        return False
+
+# ADK Web için otomatik setup
 if __name__ == "__main__":
-    # Vertex AI'yi başlat
-    project_id = os.getenv('GOOGLE_CLOUD_PROJECT')
-    if project_id:
-        vertexai.init(project=project_id, location="us-central1")
-    
-    # Gerekli çevre değişkenlerini kontrol et
-    required_vars = ['SENDER_EMAIL', 'SENDER_PASSWORD', 'GOOGLE_CLOUD_PROJECT']
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-    
-    if missing_vars:
-        print("⚠️  Gerekli çevre değişkenleri eksik:")
-        for var in missing_vars:
-            print(f"   - {var}")
-        print("\nÖrnek kullanım:")
-        print("export SENDER_EMAIL='your-email@gmail.com'")
-        print("export SENDER_PASSWORD='your-app-password'")
-        print("export SENDER_NAME='Your Name'")
-        print("export GOOGLE_CLOUD_PROJECT='your-project-id'")
-        exit(1)
-    
-    asyncio.run(main())
+    setup_vertexai()
+    print("🚀 Meeting Scheduler Agent hazır!")
+    print("📱 ADK Web başlatmak için: adk web")
+    print("🌐 Browser'da: http://localhost:8000")

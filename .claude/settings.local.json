@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm:*)",
+      "Bash(ls:*)",
+      "Bash(gcloud auth:*)",
+      "Bash(python3:*)",
+      "Bash(git checkout:*)",
+      "Bash(git clean:*)"
+    ],
+    "deny": []
+  }
+}

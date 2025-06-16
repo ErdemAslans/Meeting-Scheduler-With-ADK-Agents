@@ -1,11 +1,26 @@
-google-api-python-client==2.110.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
-google-auth==2.25.2
-msal==1.25.0
-requests==2.31.0
-icalendar==5.0.11
+# Google ADK ve AI
+google-adk
+google-cloud-aiplatform
+google-generativeai
+vertexai
+
+# Google APIs
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+# Microsoft Graph
+msal
+requests
+
+# Email
+icalendar
+
+# Async support
 asyncio
-google-cloud-aiplatform==1.38.0
-google-adk-agents==0.1.0
-vertexai==1.38.0
+
+# Environment
+python-dotenv
+
+# Utilities
+python-dateutil
