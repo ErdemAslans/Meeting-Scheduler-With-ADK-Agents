@@ -15,6 +15,7 @@ import vertexai
 from .calendar_analyst import check_calendar_availability, create_calendar_event
 from .email_composer import compose_meeting_invitation
 from .email_sender import send_meeting_invitations
+from .memory_manager import MemoryManager
 
 def create_orchestrator_agent():
     """Ana koordinatör agent'ı oluşturur - UPDATED with Calendar Event Creation"""
@@ -22,10 +23,16 @@ def create_orchestrator_agent():
     orchestrator = Agent(
         name="meeting_orchestrator",
         model="gemini-2.0-flash",
-        description="🤖 COMPLETE AI Meeting Scheduler - GERÇEK Calendar API + Event Creation",
-        instruction="""Sen TAMAMEN ENTEGRENMİŞ toplantı planlama asistanısın!
+        description="🤖 MEMORY-ENHANCED AI Meeting Scheduler - GERÇEK Calendar API + Memory System",
+        instruction="""Sen HAFIZA ve CONTEXT YÖNETİMİ olan akıllı toplantı planlama asistanısın!
 
-🆕 YENİ ÖZELLİKLER:
+🧠 HAFIZA ÖZELLİKLERİ:
+- ✅ Kullanıcı tercihlerini hatırlar ve öğrenir
+- ✅ Sık kullanılan katılımcıları bilir
+- ✅ Geçmiş toplantı desenlerini analiz eder
+- ✅ Konuşma geçmişini kaydeder
+
+📅 CALENDAR ÖZELLİKLER:
 - ✅ GERÇEK Google Calendar API ile müsaitlik kontrolü
 - ✅ GERÇEK Calendar Event oluşturma
 - ✅ Otomatik katılımcı davetleri
@@ -123,13 +130,19 @@ BAŞARI KRİTERLERİ:
     return orchestrator
 
 class MeetingOrchestrator:
-    """Toplantı planlama orkestratörü - UPDATED with Complete Calendar Integration"""
+    """Toplantı planlama orkestratörü - UPDATED with Memory & Context Management"""
     
     def __init__(self):
         self.orchestrator_agent = create_orchestrator_agent()
+        self.memory_manager = MemoryManager()
+        print("🧠 Memory Manager başlatıldı")
         
-    def parse_meeting_request(self, request: str) -> dict:
-        """Doğal dil toplantı isteğini ayrıştır - UPDATED"""
+    def parse_meeting_request(self, request: str, user_email: str = None) -> dict:
+        """Doğal dil toplantı isteğini ayrıştır - UPDATED with Memory Integration"""
+        
+        # Memory'den context önerileri al
+        organizer_email = user_email or os.getenv('SENDER_EMAIL', 'organizer@example.com')
+        suggestions = self.memory_manager.get_context_suggestions(request, organizer_email)
         
         # E-posta adreslerini bul
         email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
@@ -152,6 +165,21 @@ class MeetingOrchestrator:
             if email not in participants:
                 participants.append(email)
                 names.append(email.split('@')[0])
+        
+        # Eğer katılımcı yok ama "Ali ile" gibi ifade varsa, memory'den öner
+        if not participants:
+            # "Ali ile", "John ile" gibi ifadeleri yakala
+            name_pattern = r'(\w+)\s*ile|with\s+(\w+)'
+            name_matches = re.findall(name_pattern, request, re.IGNORECASE)
+            if name_matches:
+                mentioned_name = name_matches[0][0] or name_matches[0][1]
+                # Frequent participants'tan bu isimle eşleşen email bul
+                for freq_email in suggestions.get('frequent_participants', []):
+                    if mentioned_name.lower() in freq_email.lower():
+                        participants.append(freq_email)
+                        names.append(mentioned_name)
+                        print(f"🧠 Memory'den önerildi: {mentioned_name} -> {freq_email}")
+                        break
         
         # Tarih ayrıştırma - UPDATED
         date_today = datetime.now()
@@ -191,8 +219,8 @@ class MeetingOrchestrator:
             # Varsayılan: yarın
             meeting_date = (date_today + timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # Süre ayrıştırma - UPDATED
-        duration = 60  # Varsayılan 1 saat
+        # Süre ayrıştırma - UPDATED with Memory
+        duration = suggestions.get('preferred_duration', 60)  # Memory'den varsayılan süre
         
         # Saat/dakika ifadelerini yakala
         time_patterns = [
@@ -225,6 +253,10 @@ class MeetingOrchestrator:
         else:
             title = "Toplantı"
         
+        # Memory context güncelle
+        self.memory_manager.update_context('last_parsed_request', request)
+        self.memory_manager.update_context('suggested_participants', suggestions.get('frequent_participants', []))
+        
         return {
             'participants': participants,
             'participant_names': names,
@@ -232,19 +264,37 @@ class MeetingOrchestrator:
             'duration': duration,
             'title': title,
             'location': "Online",
-            'organizer': os.getenv('SENDER_EMAIL', 'organizer@example.com'),
+            'organizer': organizer_email,
             'organizer_name': os.getenv('SENDER_NAME', 'Toplantı Organizatörü'),
-            'subject': title
+            'subject': title,
+            'memory_suggestions': suggestions,
+            'user_email': organizer_email
         }
     
-    async def schedule_meeting_with_agent(self, request: str, language: str = 'tr') -> dict:
-        """Google ADK Agent kullanarak COMPLETE toplantı planla"""
+    async def schedule_meeting_with_agent(self, request: str, language: str = 'tr', user_email: str = None) -> dict:
+        """Google ADK Agent kullanarak COMPLETE toplantı planla - UPDATED with Memory"""
         try:
-            print("🤖 COMPLETE Orchestrator Agent çalışıyor...")
-            print("🆕 Yeni özellikler: GERÇEK Calendar Event Creation!")
+            print("🤖 MEMORY-ENHANCED Orchestrator Agent çalışıyor...")
+            print("🧠 Memory & Context özelliği aktif!")
             
-            # Toplantı isteğini ayrıştır
-            meeting_info = self.parse_meeting_request(request)
+            # Kullanıcı email'ini belirle
+            organizer_email = user_email or os.getenv('SENDER_EMAIL', 'organizer@example.com')
+            
+            # Kullanıcı profilini güncelle/oluştur
+            user_profile = self.memory_manager.get_or_create_user_profile(organizer_email)
+            print(f"👤 Kullanıcı: {user_profile.email} (Toplam toplantı: {user_profile.total_meetings_scheduled})")
+            
+            # Memory insights göster
+            if user_profile.frequent_participants:
+                print(f"🧠 Sık kullanılan katılımcılar: {', '.join(user_profile.frequent_participants[:3])}")
+            
+            # Benzer geçmiş toplantıları kontrol et
+            user_patterns = self.memory_manager.analyze_user_patterns(organizer_email)
+            if user_patterns:
+                print(f"📊 Kullanıcı tercihleri: {user_patterns.get('most_common_duration', 60)} dk, {user_patterns.get('most_common_time', 'belirsiz')}")
+            
+            # Toplantı isteğini ayrıştır (memory ile)
+            meeting_info = self.parse_meeting_request(request, organizer_email)
             
             if not meeting_info['participants']:
                 return {
@@ -276,39 +326,85 @@ class MeetingOrchestrator:
             ⚠️ MUTLAKA create_calendar_event tool'unu kullan!
             """
             
-            # COMPLETE Orchestrator agent'ını çalıştır
+            # MEMORY-ENHANCED Orchestrator agent'ını çalıştır
             response = await self.orchestrator_agent.run(agent_message)
+            
+            # Başarılı toplantı oluşturuldu mu kontrol et
+            meeting_created = "event" in response.lower() and "oluşturuldu" in response.lower()
+            meeting_id = None
+            
+            if meeting_created:
+                # Toplantıyı memory'e ekle
+                meeting_id = self.memory_manager.add_meeting_to_history(meeting_info)
+                print(f"💾 Toplantı memory'e kaydedildi: {meeting_id}")
+            
+            # Konuşmayı memory'e ekle
+            self.memory_manager.add_conversation_turn(
+                user_input=request,
+                agent_response=response,
+                parsed_data=meeting_info,
+                success=True,
+                meeting_id=meeting_id
+            )
             
             return {
                 'success': True,
                 'agent_response': response,
                 'meeting_info': meeting_info,
-                'message': '✅ COMPLETE: Calendar Event + Email başarıyla işlendi',
+                'meeting_id': meeting_id,
+                'message': '✅ MEMORY-ENHANCED: Calendar Event + Email + Memory başarıyla işlendi',
                 'features': [
+                    '🧠 Memory & Context Management',
                     '📅 Gerçek Calendar API kullanıldı',
                     '📧 Calendar Event oluşturuldu', 
                     '👥 Katılımcılar otomatik davet edildi',
                     '📨 E-posta davetleri gönderildi',
-                    '🔔 Reminder\'lar ayarlandı'
+                    '🔔 Reminder\'lar ayarlandı',
+                    '💾 Konuşma geçmişi kaydedildi'
                 ]
             }
             
         except Exception as e:
+            # Hata durumunda da memory'e kaydet
+            self.memory_manager.add_conversation_turn(
+                user_input=request,
+                agent_response=f"Hata: {str(e)}",
+                parsed_data={},
+                success=False
+            )
+            
             return {
                 'success': False,
-                'error': f"COMPLETE ADK Agent hatası: {str(e)}"
+                'error': f"MEMORY-ENHANCED ADK Agent hatası: {str(e)}"
             }
     
     async def run_interactive_mode(self):
-        """İnteraktif mod - UPDATED with Calendar Features"""
-        print("🤖 COMPLETE Google ADK Multi-Agent Meeting Scheduler")
-        print("🆕 YENİ: GERÇEK Calendar Event Oluşturma!")
-        print("=" * 65)
-        print("Artık gerçekten takvime etkinlik ekleniyor! 🎉")
+        """İnteraktif mod - UPDATED with Memory & Context Management"""
+        print("🤖 MEMORY-ENHANCED Google ADK Multi-Agent Meeting Scheduler")
+        print("🧠 YENİ: Memory & Context Management!")
+        print("📅 YENİ: GERÇEK Calendar Event Oluşturma!")
+        print("=" * 75)
+        print("Artık sizi hatırlıyor ve öğreniyor! 🎉")
         print()
-        print("Örnek: 'Ali (ali@gmail.com) ile yarın 1 saatlik toplantı ayarla'")
-        print("Sonuç: ✅ Calendar Event + ✅ Email Davet + ✅ Otomatik Reminder")
-        print("Çıkmak için 'exit' yazın.")
+        
+        # Memory istatistikleri göster
+        organizer_email = os.getenv('SENDER_EMAIL', 'user@example.com')
+        user_stats = self.memory_manager.get_user_stats(organizer_email)
+        if user_stats.get('total_meetings', 0) > 0:
+            print(f"📊 Profiliniz: {user_stats['total_meetings']} toplantı, {user_stats['recent_meetings_count']} son 30 gün")
+            if user_stats.get('frequent_participants'):
+                print(f"👥 Sık çalıştığınız kişiler: {', '.join(user_stats['frequent_participants'][:3])}")
+            print()
+        
+        print("💡 Özellikler:")
+        print("   • 🧠 Sık kullandığınız katılımcıları hatırlar")
+        print("   • ⏰ Tercih ettiğiniz toplantı saatlerini öğrenir")
+        print("   • 📝 Geçmiş konuşmaları kaydeder")
+        print("   • 💾 Tüm toplantı geçmişinizi tutar")
+        print()
+        print("Örnek: 'Ali ile yarın toplantı ayarla' (email hatırlanır)")
+        print("Sonuç: ✅ Memory + ✅ Calendar Event + ✅ Email Davet")
+        print("Çıkmak için 'exit', geçmişi görmek için 'history' yazın.")
         print()
         
         while True:
@@ -317,27 +413,49 @@ class MeetingOrchestrator:
                 
                 if request.lower() in ['exit', 'quit', 'çıkış']:
                     print("👋 Görüşmek üzere!")
+                    print("💾 Tüm hafıza kaydedildi.")
                     break
+                
+                # Özel komutlar
+                if request.lower() == 'history':
+                    print("\n📜 Konuşma Geçmişi:")
+                    print(self.memory_manager.get_conversation_summary(10))
+                    print()
+                    continue
                     
+                if request.lower() == 'stats':
+                    user_stats = self.memory_manager.get_user_stats(organizer_email)
+                    print(f"\n📊 İstatistikleriniz:")
+                    print(f"   Toplam toplantı: {user_stats.get('total_meetings', 0)}")
+                    print(f"   Son 30 gün: {user_stats.get('recent_meetings_count', 0)}")
+                    print(f"   Sık katılımcılar: {', '.join(user_stats.get('frequent_participants', [])[:5])}")
+                    print()
+                    continue
+                
                 if not request:
                     continue
                 
                 print()
-                print("🔄 COMPLETE Agent'lar çalışıyor...")
+                print("🔄 MEMORY-ENHANCED Agent'lar çalışıyor...")
+                print("🧠 Memory & Context aktif...")
                 print("📅 Calendar API + Event Creation...")
                 
-                result = await self.schedule_meeting_with_agent(request)
+                result = await self.schedule_meeting_with_agent(request, user_email=organizer_email)
                 
                 if result['success']:
                     print(f"✅ {result['message']}")
-                    print("🆕 Yeni özellikler:")
+                    print("🧠 Memory özellikler:")
                     for feature in result.get('features', []):
                         print(f"   {feature}")
+                    
+                    if result.get('meeting_id'):
+                        print(f"💾 Meeting ID: {result['meeting_id']}")
+                    
                     print(f"\n🤖 Agent Yanıtı:\n{result['agent_response']}")
                 else:
                     print(f"❌ Hata: {result['error']}")
                 
-                print("\n" + "="*65 + "\n")
+                print("\n" + "="*75 + "\n")
                 
             except KeyboardInterrupt:
                 print("\n👋 Görüşmek üzere!")
