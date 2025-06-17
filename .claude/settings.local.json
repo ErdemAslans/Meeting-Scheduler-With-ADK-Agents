@@ -6,7 +6,14 @@
       "Bash(gcloud auth:*)",
       "Bash(python3:*)",
       "Bash(git checkout:*)",
-      "Bash(git clean:*)"
+      "Bash(git clean:*)",
+      "Bash(git reset:*)",
+      "Bash(git restore:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(git config:*)"
     ],
     "deny": []
   }

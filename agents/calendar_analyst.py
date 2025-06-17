@@ -130,16 +130,26 @@ def create_calendar_event(meeting_details: dict) -> dict:
     try:
         # Meeting details parse et
         participants = meeting_details.get('participants', meeting_details.get('attendees', []))
-        date = meeting_details.get('date')
-        start_time = meeting_details.get('start_time', '10:00')
-        duration = meeting_details.get('duration', 60)
         title = meeting_details.get('title', meeting_details.get('subject', 'Toplantı'))
         location = meeting_details.get('location', 'Online')
         organizer_email = oauth_service.user_email
         
-        # Tarih ve saat hesapla
-        meeting_datetime = datetime.strptime(f"{date} {start_time}", '%Y-%m-%d %H:%M')
-        end_datetime = meeting_datetime + timedelta(minutes=duration)
+        # Tarih ve saat hesapla - Yeni format desteği
+        if 'start_datetime' in meeting_details and 'end_datetime' in meeting_details:
+            # ISO format datetime string'leri
+            meeting_datetime = datetime.fromisoformat(meeting_details['start_datetime'])
+            end_datetime = datetime.fromisoformat(meeting_details['end_datetime'])
+        else:
+            # Eski format desteği
+            date = meeting_details.get('date')
+            start_time = meeting_details.get('start_time', '10:00')
+            duration = meeting_details.get('duration', 60)
+            
+            if not date:
+                raise ValueError("Meeting date is required")
+            
+            meeting_datetime = datetime.strptime(f"{date} {start_time}", '%Y-%m-%d %H:%M')
+            end_datetime = meeting_datetime + timedelta(minutes=duration)
         
         # Google Calendar Event objesi oluştur
         event = {

@@ -162,4 +162,6 @@ tmp/
 # Meeting Scheduler specific
 .env
 credentials.json
-token.json
+token.jsoncredentials.json
+token.pickle
+memory_data.json
