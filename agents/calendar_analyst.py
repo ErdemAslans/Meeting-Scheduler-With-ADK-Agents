@@ -76,8 +76,14 @@ def check_calendar_availability(participants: List[str], date: str, duration_min
     """Takvim müsaitliği kontrol et - OAuth 2.0 ile - ADK Tool Function"""
     
     if not oauth_service.service:
-        print("⚠️ OAuth bağlantısı yok, mock data döndürülüyor")
-        return _mock_availability(participants, date, duration_minutes)
+        return {
+            'available_slots': [],
+            'participants': participants,
+            'date': date,
+            'duration': duration_minutes,
+            'message': '❌ OAuth bağlantısı yok - Lütfen önce authentication yapın',
+            'real_data': False
+        }
     
     try:
         # Tarih aralığını hesapla
@@ -85,10 +91,15 @@ def check_calendar_availability(participants: List[str], date: str, duration_min
         start_date = start_date.replace(hour=0, minute=0, second=0)
         end_date = start_date + timedelta(days=1)
         
-        # FreeBusy sorgusu
+        # FreeBusy sorgusu - Türkiye saati
+        import pytz
+        turkey_tz = pytz.timezone('Europe/Istanbul')
+        start_date_tz = turkey_tz.localize(start_date)
+        end_date_tz = turkey_tz.localize(end_date)
+        
         freebusy_query = {
-            'timeMin': start_date.isoformat() + 'Z',
-            'timeMax': end_date.isoformat() + 'Z',
+            'timeMin': start_date_tz.isoformat(),
+            'timeMax': end_date_tz.isoformat(),
             'timeZone': 'Europe/Istanbul',
             'items': [{'id': email} for email in participants]
         }
@@ -112,10 +123,24 @@ def check_calendar_availability(participants: List[str], date: str, duration_min
         
     except HttpError as e:
         print(f"❌ OAuth Calendar API hatası: {e}")
-        return _mock_availability(participants, date, duration_minutes)
+        return {
+            'available_slots': [],
+            'participants': participants,
+            'date': date,
+            'duration': duration_minutes,
+            'message': f'❌ Calendar API hatası: {str(e)}',
+            'real_data': False
+        }
     except Exception as e:
         print(f"❌ OAuth Calendar hatası: {e}")
-        return _mock_availability(participants, date, duration_minutes)
+        return {
+            'available_slots': [],
+            'participants': participants,
+            'date': date,
+            'duration': duration_minutes,
+            'message': f'❌ Calendar hatası: {str(e)}',
+            'real_data': False
+        }
 
 def create_calendar_event(meeting_details: dict) -> dict:
     """OAuth 2.0 ile Calendar Event oluştur - ADK Tool Function"""
@@ -134,11 +159,20 @@ def create_calendar_event(meeting_details: dict) -> dict:
         location = meeting_details.get('location', 'Online')
         organizer_email = oauth_service.user_email
         
-        # Tarih ve saat hesapla - Yeni format desteği
+        # Tarih ve saat hesapla - Timezone düzeltmesi
+        import pytz
+        turkey_tz = pytz.timezone('Europe/Istanbul')
+        
         if 'start_datetime' in meeting_details and 'end_datetime' in meeting_details:
             # ISO format datetime string'leri
             meeting_datetime = datetime.fromisoformat(meeting_details['start_datetime'])
             end_datetime = datetime.fromisoformat(meeting_details['end_datetime'])
+            
+            # Eğer timezone bilgisi yoksa Türkiye saatini ekle
+            if meeting_datetime.tzinfo is None:
+                meeting_datetime = turkey_tz.localize(meeting_datetime)
+            if end_datetime.tzinfo is None:
+                end_datetime = turkey_tz.localize(end_datetime)
         else:
             # Eski format desteği
             date = meeting_details.get('date')
@@ -148,7 +182,9 @@ def create_calendar_event(meeting_details: dict) -> dict:
             if not date:
                 raise ValueError("Meeting date is required")
             
-            meeting_datetime = datetime.strptime(f"{date} {start_time}", '%Y-%m-%d %H:%M')
+            # Naive datetime oluştur ve Türkiye saatiyle localize et
+            naive_datetime = datetime.strptime(f"{date} {start_time}", '%Y-%m-%d %H:%M')
+            meeting_datetime = turkey_tz.localize(naive_datetime)
             end_datetime = meeting_datetime + timedelta(minutes=duration)
         
         # Google Calendar Event objesi oluştur
@@ -227,9 +263,18 @@ def create_calendar_event(meeting_details: dict) -> dict:
         }
 
 def _calculate_free_slots(busy_times: Dict, start_date: datetime, duration_minutes: int) -> List[Dict]:
-    """Müsait zaman dilimlerini hesapla"""
+    """Müsait zaman dilimlerini hesapla - Timezone düzeltmesi"""
+    import pytz
+    turkey_tz = pytz.timezone('Europe/Istanbul')
+    
+    # Türkiye saatiyle çalışma saatleri
     work_start = start_date.replace(hour=9, minute=0, second=0, microsecond=0)
     work_end = start_date.replace(hour=18, minute=0, second=0, microsecond=0)
+    
+    # Eğer timezone bilgisi yoksa Türkiye saatiyle localize et
+    if work_start.tzinfo is None:
+        work_start = turkey_tz.localize(work_start)
+        work_end = turkey_tz.localize(work_end)
     
     available_slots = []
     current_time = work_start
@@ -241,8 +286,13 @@ def _calculate_free_slots(busy_times: Dict, start_date: datetime, duration_minut
         for participant_email, calendar_data in busy_times.items():
             if 'busy' in calendar_data:
                 for busy_period in calendar_data['busy']:
-                    busy_start = datetime.fromisoformat(busy_period['start'].replace('Z', ''))
-                    busy_end = datetime.fromisoformat(busy_period['end'].replace('Z', ''))
+                    # Google Calendar'dan gelen UTC zamanları Türkiye saatine çevir
+                    busy_start = datetime.fromisoformat(busy_period['start'].replace('Z', '+00:00'))
+                    busy_end = datetime.fromisoformat(busy_period['end'].replace('Z', '+00:00'))
+                    
+                    # UTC'den Türkiye saatine çevir
+                    busy_start = busy_start.astimezone(turkey_tz)
+                    busy_end = busy_end.astimezone(turkey_tz)
                     
                     if (current_time < busy_end and slot_end > busy_start):
                         is_available = False
@@ -277,33 +327,6 @@ def _calculate_free_slots(busy_times: Dict, start_date: datetime, duration_minut
     available_slots.sort(key=lambda x: x['score'], reverse=True)
     return available_slots[:5]
 
-def _mock_availability(participants: List[str], date: str, duration_minutes: int) -> dict:
-    """Fallback mock data"""
-    available_slots = [
-        {
-            'start': '10:00',
-            'end': f'{10 + duration_minutes//60}:{duration_minutes%60:02d}',
-            'date': date,
-            'score': 0.9,
-            'duration': duration_minutes
-        },
-        {
-            'start': '14:00', 
-            'end': f'{14 + duration_minutes//60}:{duration_minutes%60:02d}',
-            'date': date,
-            'score': 0.8,
-            'duration': duration_minutes
-        }
-    ]
-    
-    return {
-        'available_slots': available_slots,
-        'participants': participants,
-        'date': date,
-        'duration': duration_minutes,
-        'message': f'⚠️ MOCK DATA: {len(participants)} katılımcı için {len(available_slots)} müsait zaman',
-        'real_data': False
-    }
 
 def create_calendar_agent():
     """Calendar Analyst Agent'ı oluşturur - OAuth 2.0 Version"""

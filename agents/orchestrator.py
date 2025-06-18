@@ -7,15 +7,85 @@ import os
 import asyncio
 import re
 from datetime import datetime, timedelta
-from typing import List, Any
+from typing import List, Any, Optional
 from google.adk.agents import Agent
 import vertexai
 
-# Import UPDATED tool functions
+# Import tool functions
 from .calendar_analyst import check_calendar_availability, create_calendar_event
-from .email_composer import compose_meeting_invitation
-from .email_sender import send_meeting_invitations
 from .memory_manager import MemoryManager
+
+# Global memory manager
+global_memory = MemoryManager()
+
+# Memory tool functions
+def save_conversation_to_memory(user_input: str, agent_response: str, meeting_details: dict, success: bool, meeting_id: Optional[str] = None, calendar_event_id: Optional[str] = None) -> dict:
+    """Konuşmayı memory'e kaydet - ADK Tool Function"""
+    try:
+        import os
+        user_email = os.getenv('SENDER_EMAIL', 'organizer@example.com')
+        
+        # Meeting details'e calendar_event_id ekle
+        if calendar_event_id:
+            meeting_details['calendar_event_id'] = calendar_event_id
+            meeting_details['organizer'] = user_email
+        
+        # Konuşmayı kaydet
+        global_memory.add_conversation_turn(
+            user_input=user_input,
+            agent_response=agent_response,
+            parsed_data=meeting_details,
+            success=success,
+            meeting_id=meeting_id
+        )
+        
+        # Eğer toplantı başarılı ise meeting history'e de ekle
+        if success and meeting_details.get('participants'):
+            meeting_id = global_memory.add_meeting_to_history(meeting_details)
+            
+            # Frequent participants güncelle
+            for participant in meeting_details.get('participants', []):
+                global_memory.add_frequent_participant(user_email, participant)
+        
+        return {
+            'success': True,
+            'meeting_id': meeting_id,
+            'message': '💾 Konuşma ve toplantı memory\'e kaydedildi'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+def get_user_memory_insights() -> dict:
+    """Kullanıcı memory insights getir - ADK Tool Function"""
+    try:
+        # SENDER_EMAIL'den organizatör email'ini al
+        import os
+        user_email = os.getenv('SENDER_EMAIL', 'organizer@example.com')
+        
+        profile = global_memory.get_or_create_user_profile(user_email)
+        patterns = global_memory.analyze_user_patterns(user_email)
+        
+        return {
+            'success': True,
+            'user_email': user_email,
+            'profile': {
+                'email': profile.email,
+                'total_meetings': profile.total_meetings_scheduled,
+                'frequent_participants': profile.frequent_participants[:5],
+                'preferred_duration': profile.preferred_meeting_duration,
+                'preferred_times': profile.preferred_meeting_times
+            },
+            'patterns': patterns,
+            'message': f'🧠 {user_email} için memory insights alındı'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 def create_orchestrator_agent():
     """Ana koordinatör agent'ı oluşturur - UPDATED with Calendar Event Creation"""
@@ -46,68 +116,82 @@ GÖREVIN: End-to-end TAMAMEN OTOMATİK toplantı planlama.
 - "team@startup.com ile cuma 2 saatlik planlama toplantısı"
 
 🔄 TAM İŞ AKIŞIN:
-1. 📝 Kullanıcı talebini ayrıştır:
+1. 🧠 Memory insights al:
+   - get_user_memory_insights() tool'unu kullan (parametre yok)
+   - Kullanıcının geçmiş tercihlerini öğren
+   - Sık kullanılan katılımcıları tespit et
+   - Memory'den öneriler al
+
+2. 📝 Kullanıcı talebini ayrıştır:
    - Katılımcı e-postaları çıkar
+   - Memory'den bilinen katılımcıları hatırla
    - Tarih belirle (yarın, pazartesi, vs.)
    - Süre hesapla (1 saat = 60 dakika)
    - Toplantı başlığını oluştur
 
-2. 📅 check_calendar_availability tool'unu kullan:
+3. 📅 check_calendar_availability tool'unu kullan:
    - GERÇEK Google Calendar API ile müsaitlik kontrol
    - Katılımcılar listesi, tarih, süre parametreleri
    - Gerçek busy time'ları al ve skorla
 
-3. ⏰ En uygun zamanı seç:
+4. ⏰ En uygun zamanı seç:
    - En yüksek skorlu zamanı tercih et
    - Kullanıcıya seçilen zamanı bildir
 
-4. 📅 create_calendar_event tool'unu kullan:
+5. 📅 create_calendar_event tool'unu kullan:
    - GERÇEK Google Calendar Event oluştur
-   - Katılımcıları otomatik davet et
+   - Katılımcıları otomatik davet et (Google Calendar daveti)
    - Reminder'ları ayarla
    - Event ID ve link al
+   
+   ⚠️ ÖNEMLİ: Calendar event oluştururken 'sendUpdates': 'all' ayarı
+   katılımcılara otomatik Google Calendar daveti gönderir.
+   Ayrı email daveti GEREKMEZ ve GÖNDERMEMEN gerekir!
 
-5. 📧 compose_meeting_invitation tool'unu kullan:
-   - Toplantı detaylarını ve Calendar link'i ekle
-   - Profesyonel e-posta daveti hazırla
-
-6. 📨 send_meeting_invitations tool'unu kullan:
-   - E-posta davetini gönder
-   - Calendar link'i e-postaya dahil et
+6. 💾 save_conversation_to_memory tool'unu kullan:
+   - user_input: Kullanıcının original isteği
+   - agent_response: Senin yanıtın
+   - meeting_details: Tüm toplantı bilgileri
+   - success: true (eğer başarılı ise)
+   - calendar_event_id: create_calendar_event'den aldığın event_id
 
 7. ✅ TAMAMEN OTOMATİK SONUÇ:
    - ✓ Calendar event oluşturuldu
-   - ✓ Katılımcılar otomatik davet edildi
-   - ✓ E-posta gönderildi
+   - ✓ Katılımcılar otomatik Google Calendar daveti aldı
    - ✓ Reminder'lar ayarlandı
    - ✓ Meeting link'i paylaşıldı
+   - ✓ Memory'e kaydedildi
 
 🔧 TOOL SIRASI (ÖNEMLİ):
-1. check_calendar_availability (GERÇEK müsaitlik kontrol)
-2. create_calendar_event (GERÇEK Calendar Event oluştur)
-3. compose_meeting_invitation (Email hazırla + Calendar link ekle)
-4. send_meeting_invitations (Email gönder)
+1. get_user_memory_insights (Memory insights al)
+2. check_calendar_availability (GERÇEK müsaitlik kontrol)
+3. create_calendar_event (GERÇEK Calendar Event oluştur - otomatik davet gönderir)
+4. save_conversation_to_memory (Memory'e kaydet)
+
+⚠️ ARTIK KULLANMA:
+- compose_meeting_invitation (Gereksiz - calendar zaten davet gönderiyor)
+- send_meeting_invitations (Gereksiz - ikili email gönderir)
 
 BAŞARI KRİTERLERİ:
 - ✅ Calendar event oluşturulmalı
-- ✅ Katılımcılar otomatik davet edilmeli  
-- ✅ E-posta gönderilmeli
+- ✅ Katılımcılar otomatik Google Calendar daveti almalı
 - ✅ Event link paylaşılmalı
 - ✅ Kullanıcıya tam rapor verilmeli
+- ❌ Ayrı email daveti gönderilmemeli (ikili gönderim engellenir)
 
 Örnek başarılı sonuç mesajı:
 "✅ Toplantı başarıyla planlandı!
 📅 Calendar Event: [Event ID]
 🔗 Meeting Link: [Calendar Link]  
-📧 E-posta gönderildi: 2 katılımcı
+📧 Google Calendar daveti gönderildi: 2 katılımcı
 ⏰ Tarih/Saat: [Seçilen zaman]
 🔔 Reminder'lar ayarlandı"
 
 ÖNEMLI:
-- Her tool'u sırasıyla ve doğru parametrelerle çağır
+- Sadece gerekli tool'ları kullan (compose_meeting_invitation ve send_meeting_invitations KULLANMA)
 - Calendar Event MUTLAKA oluşturulmalı
 - Event ID ve calendar link'i mutlaka al ve raporla
-- Başarı durumunda event ID ve calendar link'i paylaş
+- Google Calendar otomatik davet gönderir, ayrı email gönderme
 - Türkçe ve İngilizce tam destek
 - Her adımda kullanıcıya progress bilgisi ver
 
@@ -119,12 +203,16 @@ BAŞARI KRİTERLERİ:
 3. Süreyi belirle: 1 saat = 60 dakika
 4. check_calendar_availability(participants=["ali@gmail.com", "ayse@outlook.com"], date="2025-06-18", duration_minutes=60)
 5. En uygun zamanı seç (örn: 10:00-11:00)
-6. create_calendar_event ile gerçek Calendar Event oluştur
-7. compose_meeting_invitation ile email hazırla (Calendar link dahil)
-8. send_meeting_invitations ile gönder
-9. Kullanıcıya event ID ve calendar link ile başarı raporu ver
+6. create_calendar_event ile gerçek Calendar Event oluştur (otomatik Google Calendar daveti gönderir)
+7. save_conversation_to_memory ile memory'e kaydet
+8. Kullanıcıya event ID ve calendar link ile başarı raporu ver
 """,
-        tools=[check_calendar_availability, create_calendar_event, compose_meeting_invitation, send_meeting_invitations]
+        tools=[
+            check_calendar_availability, 
+            create_calendar_event, 
+            save_conversation_to_memory,
+            get_user_memory_insights
+        ]
     )
     
     return orchestrator

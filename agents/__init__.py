@@ -24,6 +24,12 @@ try:
 except ImportError:
     send_meeting_invitations = None
 
+try:
+    from .orchestrator import save_conversation_to_memory, get_user_memory_insights
+except ImportError:
+    save_conversation_to_memory = None
+    get_user_memory_insights = None
+
 # Klasik sınıflar
 try:
     from .calendar_analyst import CalendarAnalyst
@@ -53,5 +59,7 @@ __all__ = [
     'MeetingOrchestrator',
     'check_calendar_availability',
     'compose_meeting_invitation',
-    'send_meeting_invitations'
+    'send_meeting_invitations',
+    'save_conversation_to_memory',
+    'get_user_memory_insights'
 ]

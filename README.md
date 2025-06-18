@@ -16,7 +16,7 @@ export SENDER_NAME="Your Name"
 
 ### 3. Çalıştır
 ```bash
-python run.py
+adk web
 ```
 
 ## Kullanım Örnekleri
