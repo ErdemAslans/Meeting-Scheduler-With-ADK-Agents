@@ -122,21 +122,28 @@ GÖREVIN: End-to-end TAMAMEN OTOMATİK toplantı planlama.
    - Sık kullanılan katılımcıları tespit et
    - Memory'den öneriler al
 
-2. 📝 Kullanıcı talebini ayrıştır:
-   - Katılımcı e-postaları çıkar
-   - Memory'den bilinen katılımcıları hatırla
-   - Tarih belirle (yarın, pazartesi, vs.)
-   - Süre hesapla (1 saat = 60 dakika)
-   - Toplantı başlığını oluştur
+2. 📝 ÖNEMLİ: Sana verilen ayrıştırılmış bilgileri AYNEN kullan:
+   - Süre: Sana verilen dakika değerini DEĞİŞTİRME (30 dakika = 30, 15 dakika = 15)
+   - Katılımcılar: Sana verilen email listesini kullan
+   - Tarih: Sana verilen tarihi kullan
+   - Başlık: Sana verilen başlığı kullan
+   ⚠️ KULLANICIDAn TEKRAr PARSE ETME - Verilen bilgileri kullan!
 
 3. 📅 check_calendar_availability tool'unu kullan:
    - GERÇEK Google Calendar API ile müsaitlik kontrol
    - Katılımcılar listesi, tarih, süre parametreleri
    - Gerçek busy time'ları al ve skorla
+   ⚠️ ÖNEMLİ: Eğer 'calendar_access_warning' true ise, kullanıcıya şu uyarıyı ver:
+   "UYARI: Bazı katılımcıların takvimleri özel olduğu için kontrol edilemedi. 
+   Bu saatlerde çakışma olabilir. Lütfen katılımcılarla manuel onay alın."
 
 4. ⏰ En uygun zamanı seç:
    - En yüksek skorlu zamanı tercih et
    - Kullanıcıya seçilen zamanı bildir
+   - Eğer erişilemeyen takvimler varsa, uyarıyı tekrarla
+   ⚠️ ÖNEMLİ: Eğer 'no_slots_available' true ise:
+   "❌ Bu tarihte boş slot yok! Alternatif tarihler: [alternative_dates listesi]
+   Başka bir tarih seçelim mi?" diye sor ve TOPLANTI OLUŞTURMA!
 
 5. 📅 create_calendar_event tool'unu kullan:
    - GERÇEK Google Calendar Event oluştur
@@ -163,7 +170,13 @@ GÖREVIN: End-to-end TAMAMEN OTOMATİK toplantı planlama.
    - ✓ Memory'e kaydedildi
 
 🔧 TOOL SIRASI (ÖNEMLİ):
-1. get_user_memory_insights (Memory insights al)
+1. 🧠 get_user_memory_insights tool'unu MUTLAKA kullan:
+   - İlk adım olarak memory'den benzer toplantıları kontrol et
+   - Aynı katılımcılarla yakın tarihte toplantı var mı?
+   - Kullanıcının tercih ettiği saat/süre nedir?
+   - Sık kullandığı katılımcılar kimler?
+   - Memory'den gelen önerileri kullanıcıya sun
+   
 2. check_calendar_availability (GERÇEK müsaitlik kontrol)
 3. create_calendar_event (GERÇEK Calendar Event oluştur - otomatik davet gönderir)
 4. save_conversation_to_memory (Memory'e kaydet)
@@ -310,24 +323,60 @@ class MeetingOrchestrator:
         # Süre ayrıştırma - UPDATED with Memory
         duration = suggestions.get('preferred_duration', 60)  # Memory'den varsayılan süre
         
-        # Saat/dakika ifadelerini yakala
+        # Saat/dakika ifadelerini yakala - GELİŞTİRİLMİŞ
         time_patterns = [
             (r'(\d+)\s*saat', 'hour'),
             (r'(\d+)\s*hour', 'hour'),
+            (r'(\d+)\s*saatlik', 'hour'),
+            (r'(\d+)\s*h', 'hour'),
             (r'(\d+)\s*dakika', 'minute'),
+            (r'(\d+)\s*dakikalık', 'minute'),
             (r'(\d+)\s*minute', 'minute'),
             (r'(\d+)\s*dk', 'minute'),
-            (r'(\d+)\s*min', 'minute')
+            (r'(\d+)\s*min', 'minute'),
+            (r'(\d+)\s*m', 'minute'),
+            # Özel durumlar
+            (r'yarım\s*saat', 'half_hour'),
+            (r'çeyrek\s*saat', 'quarter_hour'),
+            (r'bir\s*saat', 'one_hour'),
+            (r'iki\s*saat', 'two_hour')
         ]
         
         for pattern, unit in time_patterns:
             matches = re.findall(pattern, request.lower())
-            if matches:
-                time_value = int(matches[0])
+            if matches or unit in ['half_hour', 'quarter_hour', 'one_hour', 'two_hour']:
                 if unit == 'hour':
-                    duration = time_value * 60
-                else:
-                    duration = time_value
+                    duration = int(matches[0]) * 60
+                elif unit == 'minute':
+                    duration = int(matches[0])
+                elif unit == 'half_hour':
+                    duration = 30
+                elif unit == 'quarter_hour':
+                    duration = 15
+                elif unit == 'one_hour':
+                    duration = 60
+                elif unit == 'two_hour':
+                    duration = 120
+                print(f"🔍 Süre tespit edildi: {duration} dakika ('{pattern}' pattern'i ile)")
+                break
+        
+        # Saat ayrıştırma - UPDATED
+        start_time = "10:00"  # Varsayılan
+        
+        # Saat formatlarını yakala
+        time_patterns = [
+            r'(\d{1,2}):(\d{2})',          # 14:30, 9:15
+            r'(\d{1,2})\.(\d{2})',         # 14.30, 9.15
+            r'saat\s+(\d{1,2}):(\d{2})',   # saat 14:30
+            r'(\d{1,2})\s*:\s*(\d{2})',    # 14 : 30
+        ]
+        
+        for pattern in time_patterns:
+            matches = re.findall(pattern, request.lower())
+            if matches:
+                hour, minute = matches[0]
+                start_time = f"{int(hour):02d}:{int(minute):02d}"
+                print(f"🕒 Saat tespit edildi: {start_time}")
                 break
         
         # Toplantı başlığı oluştur
@@ -349,6 +398,7 @@ class MeetingOrchestrator:
             'participants': participants,
             'participant_names': names,
             'date': meeting_date,
+            'start_time': start_time,
             'duration': duration,
             'title': title,
             'location': "Online",
@@ -360,96 +410,86 @@ class MeetingOrchestrator:
         }
     
     async def schedule_meeting_with_agent(self, request: str, language: str = 'tr', user_email: str = None) -> dict:
-        """Google ADK Agent kullanarak COMPLETE toplantı planla - UPDATED with Memory"""
+        """Google Direct Calendar API ile COMPLETE toplantı planla - Spesifik zaman kontrolü ile"""
         try:
-            print("🤖 MEMORY-ENHANCED Orchestrator Agent çalışıyor...")
-            print("🧠 Memory & Context özelliği aktif!")
-            
-            # Kullanıcı email'ini belirle
+            # Başlangıç logları ve memory insights
+            print("🤖 DIRECT CALENDAR Orchestrator çalışıyor.")
             organizer_email = user_email or os.getenv('SENDER_EMAIL', 'organizer@example.com')
-            
-            # Kullanıcı profilini güncelle/oluştur
             user_profile = self.memory_manager.get_or_create_user_profile(organizer_email)
-            print(f"👤 Kullanıcı: {user_profile.email} (Toplam toplantı: {user_profile.total_meetings_scheduled})")
-            
-            # Memory insights göster
             if user_profile.frequent_participants:
-                print(f"🧠 Sık kullanılan katılımcılar: {', '.join(user_profile.frequent_participants[:3])}")
-            
-            # Benzer geçmiş toplantıları kontrol et
-            user_patterns = self.memory_manager.analyze_user_patterns(organizer_email)
-            if user_patterns:
-                print(f"📊 Kullanıcı tercihleri: {user_patterns.get('most_common_duration', 60)} dk, {user_patterns.get('most_common_time', 'belirsiz')}")
-            
-            # Toplantı isteğini ayrıştır (memory ile)
+                print(f"🧠 Sık katılımcılar: {', '.join(user_profile.frequent_participants[:3])}")
+
+            # İstek ayrıştırma
             meeting_info = self.parse_meeting_request(request, organizer_email)
-            
-            if not meeting_info['participants']:
-                return {
-                    'success': False,
-                    'error': 'Katılımcı e-posta adresi bulunamadı'
-                }
-            
-            # Agent'a gönderilecek UPDATED mesaj
-            agent_message = f"""
-            🆕 COMPLETE Toplantı Planlama İsteği: {request}
-            
-            Ayrıştırılan bilgiler:
-            - Katılımcılar: {', '.join(meeting_info['participants'])}
-            - Tarih: {meeting_info['date']}
-            - Süre: {meeting_info['duration']} dakika
-            - Başlık: {meeting_info['title']}
-            - Konum: {meeting_info['location']}
-            - Dil: {language}
-            
-            🔄 TAM İŞ AKIŞI (SIRASIZ TAKIP ET):
-            1. ✅ check_calendar_availability ile GERÇEK müsaitlik kontrol
-            2. ✅ En uygun zamanı belirle
-            3. ✅ create_calendar_event ile GERÇEK Calendar Event oluştur (YENİ!)
-            4. ✅ compose_meeting_invitation ile email hazırla (Calendar link dahil)
-            5. ✅ send_meeting_invitations ile email gönder
-            6. ✅ Event ID ve Calendar link ile başarı raporu ver
-            
-            🎯 Hedef: Kullanıcının takviminde gerçek event oluşturulmalı!
-            ⚠️ MUTLAKA create_calendar_event tool'unu kullan!
-            """
-            
-            # MEMORY-ENHANCED Orchestrator agent'ını çalıştır
-            response = await self.orchestrator_agent.run(agent_message)
-            
-            # Başarılı toplantı oluşturuldu mu kontrol et
-            meeting_created = "event" in response.lower() and "oluşturuldu" in response.lower()
-            meeting_id = None
-            
-            if meeting_created:
-                # Toplantıyı memory'e ekle
-                meeting_id = self.memory_manager.add_meeting_to_history(meeting_info)
-                print(f"💾 Toplantı memory'e kaydedildi: {meeting_id}")
-            
-            # Konuşmayı memory'e ekle
-            self.memory_manager.add_conversation_turn(
-                user_input=request,
-                agent_response=response,
-                parsed_data=meeting_info,
-                success=True,
-                meeting_id=meeting_id
+            if not meeting_info.get('participants'):
+                return {'success': False, 'error': 'Katılımcı e-posta adresi bulunamadı.'}
+
+            # 1. Kullanıcının istediği spesifik zaman aralığını kontrol et
+            import datetime, pytz
+            from .calendar_analyst import oauth_service
+            turkey_tz = pytz.timezone('Europe/Istanbul')
+            start_str = f"{meeting_info['date']} {meeting_info.get('start_time', '10:00')}"
+            requested_start = turkey_tz.localize(
+                datetime.datetime.strptime(start_str, '%Y-%m-%d %H:%M')
+            )
+            requested_end = requested_start + datetime.timedelta(minutes=meeting_info['duration'])
+
+            print(f"🕒 İstenen zaman: {requested_start.strftime('%Y-%m-%d %H:%M')} - {requested_end.strftime('%H:%M')} ({meeting_info['duration']} dakika)")
+
+            fb_query = {
+                'timeMin': requested_start.isoformat(),
+                'timeMax': requested_end.isoformat(),
+                'timeZone': 'Europe/Istanbul',
+                'items': [{'id': email} for email in meeting_info['participants']]
+            }
+            fb_result = oauth_service.service.freebusy().query(body=fb_query).execute()
+            busy_times = any(
+                len(calendars.get('busy', [])) > 0 for calendars in fb_result.get('calendars', {}).values()
             )
             
+            if busy_times:
+                # Takvim doluysa, kullanıcıdan yeni tarih/saat iste
+                return {
+                    'success': False,
+                    'error': (
+                        f"⚠️ Seçtiğin {requested_start.strftime('%Y-%m-%d %H:%M')} — "
+                        f"{requested_end.strftime('%H:%M')} arası dolu. Lütfen başka bir tarih veya saat belirt.")
+                }
+
+            # 2. Önce kullanıcıya detayları göster - ONAY İSTE
+            meeting_summary = f"""
+📅 **TOPLANTI DETAYLARI - ONAY GEREKLİ**
+
+📋 **Başlık**: {meeting_info['title']}
+👥 **Katılımcılar**: {', '.join(meeting_info['participants'])}
+📅 **Tarih**: {requested_start.strftime('%d %B %Y')} ({requested_start.strftime('%A')})
+🕒 **Saat**: {requested_start.strftime('%H:%M')} - {requested_end.strftime('%H:%M')}
+⏱️ **Süre**: {meeting_info['duration']} dakika
+🌍 **Zaman Dilimi**: Europe/Istanbul
+📍 **Konum**: {meeting_info.get('location', 'Online')}
+
+✅ **Bu bilgiler doğru mu? Toplantıyı oluşturayım mı?**
+
+💡 Değişiklik yapmak istersen: "Hayır, saat 14:00'da olsun" veya "Süreyi 30 dakika yap" diyebilirsin.
+✅ Onaylamak için: "Evet", "Tamam", "Oluştur" diyebilirsin.
+"""
+
             return {
                 'success': True,
-                'agent_response': response,
-                'meeting_info': meeting_info,
-                'meeting_id': meeting_id,
-                'message': '✅ MEMORY-ENHANCED: Calendar Event + Email + Memory başarıyla işlendi',
-                'features': [
-                    '🧠 Memory & Context Management',
-                    '📅 Gerçek Calendar API kullanıldı',
-                    '📧 Calendar Event oluşturuldu', 
-                    '👥 Katılımcılar otomatik davet edildi',
-                    '📨 E-posta davetleri gönderildi',
-                    '🔔 Reminder\'lar ayarlandı',
-                    '💾 Konuşma geçmişi kaydedildi'
-                ]
+                'needs_confirmation': True,
+                'meeting_details': meeting_info,
+                'requested_start': requested_start.isoformat(),
+                'requested_end': requested_end.isoformat(),
+                'message': meeting_summary,
+                'confirmation_data': {
+                    'organizer': organizer_email,
+                    'start_datetime': requested_start.isoformat(),
+                    'end_datetime': requested_end.isoformat(),
+                    'participants': meeting_info['participants'],
+                    'title': meeting_info['title'],
+                    'duration': meeting_info['duration'],
+                    'location': meeting_info.get('location', 'Online')
+                }
             }
             
         except Exception as e:
@@ -464,6 +504,54 @@ class MeetingOrchestrator:
             return {
                 'success': False,
                 'error': f"MEMORY-ENHANCED ADK Agent hatası: {str(e)}"
+            }
+    
+    async def confirm_and_create_meeting(self, confirmation_data: dict, user_email: str = None) -> dict:
+        """Onaylanan toplantıyı oluştur"""
+        try:
+            print("✅ Toplantı onaylandı - Oluşturuluyor...")
+            
+            from .calendar_analyst import create_calendar_event
+            
+            # Event oluştur
+            event_resp = create_calendar_event(confirmation_data)
+            
+            if event_resp.get('success'):
+                # Memory'e kaydet
+                meeting_id = self.memory_manager.add_meeting_to_history(confirmation_data)
+                self.memory_manager.add_conversation_turn(
+                    user_input=f"Toplantı onaylandı: {confirmation_data['title']}",
+                    agent_response=f"✅ Toplantı başarıyla oluşturuldu!",
+                    parsed_data=confirmation_data,
+                    success=True,
+                    meeting_id=meeting_id
+                )
+                
+                return {
+                    'success': True,
+                    'meeting_id': meeting_id,
+                    'event_id': event_resp.get('event_id'),
+                    'event_link': event_resp.get('event_link'),
+                    'message': (
+                        f"✅ Toplantı başarıyla oluşturuldu!\n"
+                        f"📅 Event ID: {event_resp.get('event_id')}\n"
+                        f"🔗 Meeting Link: {event_resp.get('event_link')}\n"
+                        f"📧 Google Calendar daveti gönderildi: {len(confirmation_data['participants'])} katılımcı\n"
+                        f"⏰ Tarih/Saat: {confirmation_data['start_datetime'][:16]} - {confirmation_data['end_datetime'][11:16]}\n"
+                        f"🔔 Reminder'lar ayarlandı"
+                    ),
+                    'agent_response': event_resp.get('message', 'Toplantı başarıyla oluşturuldu.')
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': event_resp.get('error', 'Takvim etkinliği oluşturulurken bir hata oluştu.')
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"Toplantı oluşturma hatası: {str(e)}"
             }
     
     async def run_interactive_mode(self):
@@ -557,7 +645,7 @@ root_agent = create_orchestrator_agent()
 # Vertex AI başlatma
 def setup_vertexai():
     """Vertex AI'yi başlat"""
-    project_id = os.getenv('GOOGLE_CLOUD_PROJECT', 'agentproject-462613')
+    project_id = os.getenv('GOOGLE_CLOUD_PROJECT', 'meeting-agent-463411')
     try:
         vertexai.init(project=project_id, location='us-central1')
         print(f"✅ Vertex AI başlatıldı - Project: {project_id}")

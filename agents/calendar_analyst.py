@@ -108,15 +108,74 @@ def check_calendar_availability(participants: List[str], date: str, duration_min
         freebusy_result = oauth_service.service.freebusy().query(body=freebusy_query).execute()
         busy_times = freebusy_result.get('calendars', {})
         
+        # Özel takvim kontrolü - erişilemeyen takvimleri tespit et
+        inaccessible_calendars = []
+        accessible_calendars = []
+        
+        for participant_email in participants:
+            calendar_data = busy_times.get(participant_email, {})
+            
+            # Hata kontrolü - API erişim hatası
+            if 'errors' in calendar_data:
+                error_reasons = [error.get('reason', 'unknown') for error in calendar_data['errors']]
+                if 'notFound' in error_reasons or 'internalError' in error_reasons:
+                    print(f"🚫 {participant_email}: FreeBusy API erişim reddedildi (private calendar)")
+                    inaccessible_calendars.append(participant_email)
+                else:
+                    print(f"❌ {participant_email}: API hatası - {error_reasons}")
+                    inaccessible_calendars.append(participant_email)
+            elif 'busy' in calendar_data:
+                accessible_calendars.append(participant_email)
+                if len(calendar_data['busy']) == 0:
+                    print(f"✅ {participant_email}: FreeBusy erişimi başarılı (boş takvim veya müsait)")
+                else:
+                    print(f"✅ {participant_email}: FreeBusy erişimi başarılı ({len(calendar_data['busy'])} meşgul slot)")
+            else:
+                print(f"⚠️ {participant_email}: FreeBusy yanıtı alınamadı")
+                inaccessible_calendars.append(participant_email)
+        
         # Müsait saatleri hesapla
         available_slots = _calculate_free_slots(busy_times, start_date, duration_minutes)
+        
+        # Boş takvim kontrolü ve alternatif önerileri
+        no_slots_available = len(available_slots) == 0
+        
+        # Uyarı ve öneri mesajları oluştur
+        access_warning = len(inaccessible_calendars) > 0
+        warning_message = ""
+        if access_warning:
+            warning_message = f" ⚠️ UYARI: {len(inaccessible_calendars)} katılımcının takvimine erişim yok: {', '.join(inaccessible_calendars)}"
+        
+        # Boş takvim mesajı
+        availability_message = ""
+        if no_slots_available:
+            availability_message = f"❌ {date} tarihinde {duration_minutes} dakikalık toplantı için boş slot bulunamadı!"
+        else:
+            availability_message = f"✅ {len(available_slots)} müsait zaman bulundu"
+        
+        # Alternatif tarih önerileri oluştur (eğer slot yoksa)
+        alternative_dates = []
+        if no_slots_available:
+            base_date = datetime.strptime(date, '%Y-%m-%d')
+            for i in range(1, 8):  # Sonraki 7 gün
+                next_date = base_date + timedelta(days=i)
+                # Hafta sonu atla
+                if next_date.weekday() < 5:  # 0-4 hafta içi
+                    alternative_dates.append(next_date.strftime('%Y-%m-%d'))
+                if len(alternative_dates) >= 3:  # Maksimum 3 alternatif
+                    break
         
         return {
             'available_slots': available_slots,
             'participants': participants,
+            'accessible_participants': accessible_calendars,
+            'inaccessible_participants': inaccessible_calendars,
+            'calendar_access_warning': access_warning,
+            'no_slots_available': no_slots_available,
+            'alternative_dates': alternative_dates,
             'date': date,
             'duration': duration_minutes,
-            'message': f'✅ OAuth 2.0 API: {len(participants)} katılımcı için {len(available_slots)} müsait zaman bulundu',
+            'message': f'OAuth 2.0 API: {len(accessible_calendars)} katılımcının takvimi kontrol edildi. {availability_message}{warning_message}',
             'real_data': True,
             'oauth_user': oauth_service.user_email
         }
@@ -176,8 +235,21 @@ def create_calendar_event(meeting_details: dict) -> dict:
         else:
             # Eski format desteği
             date = meeting_details.get('date')
-            start_time = meeting_details.get('start_time', '10:00')
-            duration = meeting_details.get('duration', 60)
+            start_time = meeting_details.get('start_time')
+            duration = meeting_details.get('duration')
+            
+            # ZORUNLU ALAN KONTROLÜ
+            if not start_time:
+                raise ValueError("⚠️ start_time zorunlu! Meeting details'da start_time eksik.")
+            if not duration:
+                raise ValueError("⚠️ duration zorunlu! Meeting details'da duration eksik.")
+            
+            # DEBUG: Duration kontrolü
+            print(f"🔍 create_calendar_event DEBUG:")
+            print(f"   - meeting_details keys: {list(meeting_details.keys())}")
+            print(f"   - duration value: {duration}")
+            print(f"   - start_time: {start_time}")
+            print(f"   - date: {date}")
             
             if not date:
                 raise ValueError("Meeting date is required")
