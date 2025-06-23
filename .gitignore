@@ -168,3 +168,4 @@ memory_data.json
 *.pickle
 .claude/
 agents/__pycache__/
+.env
